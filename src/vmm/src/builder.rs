@@ -123,6 +123,8 @@ pub enum StartMicrovmError {
     VcpuFdCloneError(#[from] crate::vstate::vcpu::CopyKvmFdError),
     /// Error with the Vm object: {0}
     Vm(#[from] VmError),
+    /// Nested virtualization requested but unsupported: {0}
+    NestedVirtUnsupported(String),
 }
 
 /// It's convenient to automatically convert `linux_loader::cmdline::Error`s

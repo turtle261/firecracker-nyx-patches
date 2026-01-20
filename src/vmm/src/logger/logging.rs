@@ -3,7 +3,7 @@
 
 use std::fmt::Debug;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -28,6 +28,7 @@ pub static INSTANCE_ID: OnceLock<String> = OnceLock::new();
 /// Default values matching the swagger specification (`src/firecracker/swagger/firecracker.yaml`).
 pub static LOGGER: Logger = Logger(Mutex::new(LoggerConfiguration {
     target: None,
+    stdout: None,
     filter: LogFilter { module: None },
     format: LogFormat {
         show_level: false,
@@ -48,6 +49,10 @@ impl Logger {
     pub fn init(&'static self) -> Result<(), LoggerInitError> {
         log::set_logger(self)?;
         log::set_max_level(DEFAULT_LEVEL);
+        let mut guard = self.0.lock().unwrap();
+        if guard.target.is_none() && guard.stdout.is_none() {
+            guard.stdout = open_stdout_nonblock();
+        }
         Ok(())
     }
 
@@ -65,6 +70,8 @@ impl Logger {
             let file = open_file_write_nonblock(&log_path).map_err(LoggerUpdateError)?;
 
             guard.target = Some(file);
+        } else if guard.target.is_none() && guard.stdout.is_none() {
+            guard.stdout = open_stdout_nonblock();
         };
 
         if let Some(show_level) = config.show_level {
@@ -99,6 +106,7 @@ pub struct LogFormat {
 #[derive(Debug)]
 pub struct LoggerConfiguration {
     pub target: Option<std::fs::File>,
+    pub stdout: Option<std::fs::File>,
     pub filter: LogFilter,
     pub format: LogFormat,
 }
@@ -160,6 +168,8 @@ impl Log for Logger {
 
             let result = if let Some(file) = &mut guard.target {
                 file.write_all(message.as_bytes())
+            } else if let Some(file) = &mut guard.stdout {
+                file.write_all(message.as_bytes())
             } else {
                 std::io::stdout().write_all(message.as_bytes())
             };
@@ -173,6 +183,10 @@ impl Log for Logger {
     }
 
     fn flush(&self) {}
+}
+
+fn open_stdout_nonblock() -> Option<std::fs::File> {
+    open_file_write_nonblock(Path::new("/dev/stdout")).ok()
 }
 
 /// Strongly typed structure used to describe the logger.

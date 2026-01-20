@@ -11,7 +11,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Barrier};
 use std::{fmt, io, thread};
 
-use kvm_bindings::{KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
+use kvm_bindings::{KVM_EXIT_DIRTY_RING_FULL, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
 use kvm_ioctls::{VcpuExit, VcpuFd};
 use libc::{c_int, c_void, siginfo_t};
 use log::{error, info, warn};
@@ -226,6 +226,7 @@ impl Vcpu {
                 Ok(VcpuEmulation::Handled) => (),
                 // Emulation was interrupted, check external events.
                 Ok(VcpuEmulation::Interrupted) => break,
+                Ok(VcpuEmulation::DirtyRingFull) => break,
                 // If the guest was rebooted or halted:
                 // - vCPU0 will always exit out of `KVM_RUN` with KVM_EXIT_SHUTDOWN or KVM_EXIT_HLT.
                 // - the other vCPUs won't ever exit out of `KVM_RUN`, but they won't consume CPU.
@@ -518,6 +519,9 @@ fn handle_kvm_exit(
                     )))
                 }
             },
+            VcpuExit::Unsupported(exit_reason) if exit_reason == KVM_EXIT_DIRTY_RING_FULL => {
+                Ok(VcpuEmulation::DirtyRingFull)
+            }
             arch_specific_reason => {
                 // run specific architecture emulation.
                 peripherals.run_arch_emulation(arch_specific_reason)
@@ -677,6 +681,8 @@ impl Drop for VcpuHandle {
 pub enum VcpuEmulation {
     /// Handled.
     Handled,
+    /// Dirty ring is full and needs to be harvested.
+    DirtyRingFull,
     /// Interrupted.
     Interrupted,
     /// Stopped.

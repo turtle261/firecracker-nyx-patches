@@ -7,7 +7,7 @@
 
 use std::fs::File;
 use std::io::SeekFrom;
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex};
 
 use bitvec::vec::BitVec;
@@ -246,6 +246,25 @@ impl GuestRegionMmapExt {
 
     pub(crate) fn slot_cnt(&self) -> u32 {
         u32::try_from(u64_to_usize(self.len()) / self.slot_size).unwrap()
+    }
+
+    /// Returns the slot range covered by this region.
+    pub fn slot_range(&self) -> Range<u32> {
+        self.slot_from..self.slot_from + self.slot_cnt()
+    }
+
+    /// Returns the slot size used for this region.
+    pub fn slot_size(&self) -> usize {
+        self.slot_size
+    }
+
+    /// Returns the base guest address for a specific slot, if it belongs to this region.
+    pub fn slot_base(&self, slot: u32) -> Option<GuestAddress> {
+        if slot < self.slot_from || slot >= self.slot_from + self.slot_cnt() {
+            return None;
+        }
+        let offset = ((slot - self.slot_from) as u64) * (self.slot_size as u64);
+        Some(self.start_addr().unchecked_add(offset))
     }
 
     pub(crate) fn mem_slot(&self, slot: u32) -> GuestMemorySlot<'_> {

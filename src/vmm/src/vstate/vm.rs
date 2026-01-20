@@ -9,13 +9,14 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[cfg(target_arch = "x86_64")]
 use kvm_bindings::KVM_IRQCHIP_IOAPIC;
 use kvm_bindings::{
-    KVM_IRQ_ROUTING_IRQCHIP, KVM_IRQ_ROUTING_MSI, KVM_MSI_VALID_DEVID, KvmIrqRouting,
+    KVMIO, KVM_IRQ_ROUTING_IRQCHIP, KVM_IRQ_ROUTING_MSI, KVM_MSI_VALID_DEVID, KvmIrqRouting,
     kvm_irq_routing_entry, kvm_userspace_memory_region,
 };
 use kvm_ioctls::VmFd;
@@ -23,6 +24,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 use vmm_sys_util::errno;
 use vmm_sys_util::eventfd::EventFd;
+use vmm_sys_util::ioctl_io_nr;
 
 pub use crate::arch::{ArchVm as Vm, ArchVmError, VmState};
 use crate::arch::{GSI_MSI_END, host_page_size};
@@ -39,6 +41,8 @@ use crate::vstate::memory::{
 use crate::vstate::resources::ResourceAllocator;
 use crate::vstate::vcpu::VcpuError;
 use crate::{DirtyBitmap, Vcpu, mem_size_mib};
+
+ioctl_io_nr!(KVM_RESET_DIRTY_RINGS, KVMIO, 0xc7);
 
 #[derive(Debug, Serialize, Deserialize)]
 /// A struct representing an interrupt line used by some device of the microVM
@@ -87,6 +91,8 @@ pub enum VmError {
     InsertRegion(#[from] vm_memory::GuestRegionCollectionError),
     /// Error calling mincore: {0}
     Mincore(vmm_sys_util::errno::Error),
+    /// Failed to reset dirty rings: {0}
+    ResetDirtyRings(vmm_sys_util::errno::Error),
     /// ResourceAllocator error: {0}
     ResourceAllocator(#[from] vm_allocator::Error),
     /// MemoryError error: {0}
@@ -302,6 +308,17 @@ impl Vm {
             .for_each(|mem_slot| {
                 let _ = self.fd().get_dirty_log(mem_slot.slot, mem_slot.slice.len());
             });
+    }
+
+    /// Resets the KVM dirty ring tracking for all vcpus.
+    pub fn reset_dirty_rings(&self) -> Result<(), VmError> {
+        // SAFETY: Safe because the fd is a valid KVM VM file descriptor.
+        let ret = unsafe { libc::ioctl(self.fd().as_raw_fd(), KVM_RESET_DIRTY_RINGS()) };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(VmError::ResetDirtyRings(errno::Error::last()))
+        }
     }
 
     /// Retrieves the KVM dirty bitmap for each of the guest's memory regions.

@@ -56,6 +56,8 @@ pub struct VmInfo {
     pub boot_source: BootSourceConfig,
     /// Huge page configuration
     pub huge_pages: HugePageConfig,
+    /// Nested virtualization enablement
+    pub enable_nested_virt: bool,
 }
 
 impl From<&VmResources> for VmInfo {
@@ -66,6 +68,7 @@ impl From<&VmResources> for VmInfo {
             cpu_template: StaticCpuTemplate::from(&value.machine_config.cpu_template),
             boot_source: value.boot_source.config.clone(),
             huge_pages: value.machine_config.huge_pages,
+            enable_nested_virt: value.machine_config.enable_nested_virt,
         }
     }
 }
@@ -386,6 +389,7 @@ pub fn restore_from_snapshot(
             cpu_template: Some(microvm_state.vm_info.cpu_template),
             track_dirty_pages: Some(track_dirty_pages),
             huge_pages: Some(microvm_state.vm_info.huge_pages),
+            enable_nested_virt: Some(microvm_state.vm_info.enable_nested_virt),
             #[cfg(feature = "gdb")]
             gdb_socket_path: None,
         })

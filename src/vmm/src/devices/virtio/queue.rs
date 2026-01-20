@@ -8,7 +8,7 @@
 use std::num::Wrapping;
 use std::sync::atomic::{Ordering, fence};
 
-use crate::logger::error;
+use crate::logger::{error, warn};
 use crate::utils::u64_to_usize;
 use crate::vstate::memory::{Bitmap, ByteValued, GuestAddress, GuestMemory};
 
@@ -460,6 +460,23 @@ impl Queue {
         (Wrapping(self.avail_ring_idx_get()) - self.next_avail).0
     }
 
+    fn len_sanitized(&mut self) -> u16 {
+        let len = self.len();
+        if len > self.size {
+            // After snapshot restores, the driver's avail_idx can be behind next_avail.
+            // Resync to avoid panicking on a wrapped index.
+            let avail_idx = self.avail_ring_idx_get();
+            warn!(
+                "queue avail_idx wrapped (avail_idx={}, next_avail={}, size={}), resyncing",
+                avail_idx, self.next_avail.0, self.size
+            );
+            self.next_avail = Wrapping(avail_idx);
+            self.num_added = Wrapping(0);
+            return 0;
+        }
+        len
+    }
+
     /// Checks if the driver has made any descriptor chains available in the avail ring.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -476,20 +493,13 @@ impl Queue {
     /// the error to the user (e.g. loading a corrupt snapshot file), and hence cannot panic on its
     /// own.
     pub fn pop(&mut self) -> Result<Option<DescriptorChain>, InvalidAvailIdx> {
-        let len = self.len();
+        let len = self.len_sanitized();
         // The number of descriptor chain heads to process should always
         // be smaller or equal to the queue size, as the driver should
         // never ask the VMM to process a available ring entry more than
         // once. Checking and reporting such incorrect driver behavior
         // can prevent potential hanging and Denial-of-Service from
         // happening on the VMM side.
-        if self.size < len {
-            return Err(InvalidAvailIdx {
-                queue_size: self.size,
-                reported_len: len,
-            });
-        }
-
         if len == 0 {
             return Ok(None);
         }
@@ -616,16 +626,10 @@ impl Queue {
             return Ok(true);
         }
 
-        let len = self.len();
+        let len = self.len_sanitized();
         if len != 0 {
             // The number of descriptor chain heads to process should always
             // be smaller or equal to the queue size.
-            if len > self.size {
-                return Err(InvalidAvailIdx {
-                    queue_size: self.size,
-                    reported_len: len,
-                });
-            }
             return Ok(false);
         }
 
@@ -1475,16 +1479,10 @@ mod tests {
         // We've actually just popped a descriptor so 6 - 1 = 5.
         assert_eq!(q.len(), 5);
 
-        // However, since the apparent length set by the driver is more than the queue size,
-        // we would be running the risk of going through some descriptors more than once.
-        // As such, we expect to panic.
-        assert_eq!(
-            q.pop().unwrap_err(),
-            InvalidAvailIdx {
-                reported_len: 5,
-                queue_size: 4
-            }
-        );
+        // Since the apparent length set by the driver is more than the queue size,
+        // the queue resyncs and treats this as no pending descriptors.
+        assert!(q.pop().unwrap().is_none());
+        assert_eq!(q.len(), 0);
     }
 
     #[test]
@@ -1512,13 +1510,8 @@ mod tests {
         // driver sets available index to suspicious value.
         vq.avail.idx.set(6);
 
-        assert_eq!(
-            q.pop_or_enable_notification().unwrap_err(),
-            InvalidAvailIdx {
-                queue_size: 4,
-                reported_len: 6
-            }
-        );
+        assert!(q.pop_or_enable_notification().unwrap().is_none());
+        assert_eq!(q.len(), 0);
     }
 
     #[test]

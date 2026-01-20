@@ -96,11 +96,11 @@ pub struct Vcpu {
     #[cfg(feature = "gdb")]
     gdb_event: Option<Sender<usize>>,
     /// The receiving end of events channel owned by the vcpu side.
-    event_receiver: Receiver<VcpuEvent>,
+    pub event_receiver: Receiver<VcpuEvent>,
     /// The transmitting end of the events channel which will be given to the handler.
-    event_sender: Option<Sender<VcpuEvent>>,
+    pub event_sender: Option<Sender<VcpuEvent>>,
     /// The receiving end of the responses channel which will be given to the handler.
-    response_receiver: Option<Receiver<VcpuResponse>>,
+    pub response_receiver: Option<Receiver<VcpuResponse>>,
     /// The transmitting end of the responses channel owned by the vcpu side.
     response_sender: Sender<VcpuResponse>,
 }
@@ -238,6 +238,7 @@ impl Vcpu {
                     self.kvm_vcpu.kvmclock_ctrl();
                     return StateMachine::next(Self::paused);
                 }
+                Ok(VcpuEmulation::DebugEvent(_)) => break,
                 // Emulation errors lead to vCPU exit.
                 Err(_) => return self.exit(FcExitCode::GenericError),
             }
@@ -414,15 +415,25 @@ impl Vcpu {
                 // Notify that this KVM_RUN was interrupted.
                 Ok(VcpuEmulation::Interrupted)
             }
-            #[cfg(feature = "gdb")]
-            Ok(VcpuExit::Debug(_)) => {
-                if let Some(gdb_event) = &self.gdb_event {
-                    gdb_event
-                        .send(get_raw_tid(self.kvm_vcpu.index.into()))
-                        .expect("Unable to notify gdb event");
+            Ok(VcpuExit::Debug(debug)) => {
+                #[cfg(feature = "gdb")]
+                {
+                    if let Some(gdb_event) = &self.gdb_event {
+                        gdb_event
+                            .send(get_raw_tid(self.kvm_vcpu.index.into()))
+                            .expect("Unable to notify gdb event");
+                    }
+                    return Ok(VcpuEmulation::Paused);
                 }
-
-                Ok(VcpuEmulation::Paused)
+                #[cfg(not(feature = "gdb"))]
+                {
+                    return Ok(VcpuEmulation::DebugEvent(DebugExitInfo {
+                        exception: debug.exception,
+                        pc: debug.pc,
+                        dr6: debug.dr6,
+                        dr7: debug.dr7,
+                    }));
+                }
             }
             emulation_result => handle_kvm_exit(&mut self.kvm_vcpu.peripherals, emulation_result),
         }
@@ -524,6 +535,7 @@ fn handle_kvm_exit(
                         .to_string(),
                 ))
             }
+            libc::EFAULT => Err(VcpuError::FaultyKvmExit(format!("{}", err))),
             _ => {
                 METRICS.vcpu.failures.inc();
                 error!("Failure during vcpu run: {}", err);
@@ -672,6 +684,17 @@ pub enum VcpuEmulation {
     /// Pause request
     #[cfg(feature = "gdb")]
     Paused,
+    /// Debug event (breakpoint/single-step)
+    DebugEvent(DebugExitInfo),
+}
+
+/// Minimal debug information from a KVM debug exit.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct DebugExitInfo {
+    pub exception: u32,
+    pub pc: u64,
+    pub dr6: u64,
+    pub dr7: u64,
 }
 
 #[cfg(test)]

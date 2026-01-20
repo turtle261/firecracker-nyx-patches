@@ -77,7 +77,7 @@ pub mod acpi;
 pub mod builder;
 /// Types for guest configuration.
 pub mod cpu_config;
-pub(crate) mod device_manager;
+pub mod device_manager;
 /// Emulates virtual and hardware devices.
 #[allow(missing_docs)]
 pub mod devices;
@@ -312,7 +312,7 @@ pub struct Vmm {
     // Used by Vcpus and devices to initiate teardown; Vmm should never write here.
     vcpus_exit_evt: EventFd,
     // Device manager
-    device_manager: DeviceManager,
+    pub device_manager: DeviceManager,
 }
 
 impl Vmm {
@@ -326,9 +326,20 @@ impl Vmm {
         self.instance_info.clone()
     }
 
+    /// Provides access to the underlying KVM handle.
+    pub fn kvm(&self) -> &Kvm {
+        &self.kvm
+    }
+
     /// Provides the Vmm shutdown exit code if there is one.
     pub fn shutdown_exit_code(&self) -> Option<FcExitCode> {
         self.shutdown_exit_code
+    }
+
+    /// Clears any shutdown exit code and returns the VM to a paused state.
+    pub fn clear_shutdown_exit_code(&mut self) {
+        self.shutdown_exit_code = None;
+        self.instance_info.state = VmState::Paused;
     }
 
     /// Starts the microVM vcpus.

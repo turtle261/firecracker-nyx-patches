@@ -4,6 +4,10 @@
 //! Defines the structures needed for saving/restoring block devices.
 
 use device::ConfigSpace;
+use std::sync::Arc;
+
+use super::io::cow_io::CowCache;
+use super::io::FileEngine;
 use serde::{Deserialize, Serialize};
 use vmm_sys_util::eventfd::EventFd;
 
@@ -30,6 +34,8 @@ pub enum FileEngineTypeState {
     Sync,
     /// Async File Engine.
     Async,
+    /// Copy-on-write file engine.
+    Cow,
 }
 
 impl From<FileEngineType> for FileEngineTypeState {
@@ -37,6 +43,7 @@ impl From<FileEngineType> for FileEngineTypeState {
         match file_engine_type {
             FileEngineType::Sync => FileEngineTypeState::Sync,
             FileEngineType::Async => FileEngineTypeState::Async,
+            FileEngineType::Cow => FileEngineTypeState::Cow,
         }
     }
 }
@@ -46,6 +53,7 @@ impl From<FileEngineTypeState> for FileEngineType {
         match file_engine_type_state {
             FileEngineTypeState::Sync => FileEngineType::Sync,
             FileEngineTypeState::Async => FileEngineType::Async,
+            FileEngineTypeState::Cow => FileEngineType::Cow,
         }
     }
 }
@@ -59,8 +67,14 @@ pub struct VirtioBlockState {
     root_device: bool,
     disk_path: String,
     pub virtio_state: VirtioDeviceState,
+    #[serde(skip, default = "default_cow_state")]
+    pub cow_state: Arc<CowCache>,
     rate_limiter_state: RateLimiterState,
     file_engine_type: FileEngineTypeState,
+}
+
+fn default_cow_state() -> Arc<CowCache> {
+    Arc::new(CowCache::new(0, None))
 }
 
 impl Persist<'_> for VirtioBlock {
@@ -69,6 +83,10 @@ impl Persist<'_> for VirtioBlock {
     type Error = VirtioBlockError;
 
     fn save(&self) -> Self::State {
+        let cow_state = match &self.disk.file_engine {
+            FileEngine::Cow(engine) => engine.snapshot(),
+            _ => Arc::new(CowCache::new(0, None)),
+        };
         // Save device state.
         VirtioBlockState {
             id: self.id.clone(),
@@ -77,6 +95,7 @@ impl Persist<'_> for VirtioBlock {
             root_device: self.root_device,
             disk_path: self.disk.file_path.clone(),
             virtio_state: VirtioDeviceState::from_device(self),
+            cow_state,
             rate_limiter_state: self.rate_limiter.save(),
             file_engine_type: FileEngineTypeState::from(self.file_engine_type()),
         }
@@ -187,8 +206,13 @@ mod tests {
             FileEngineTypeState::Sync,
             FileEngineTypeState::from(FileEngineType::Sync)
         );
+        assert_eq!(
+            FileEngineTypeState::Cow,
+            FileEngineTypeState::from(FileEngineType::Cow)
+        );
         assert_eq!(FileEngineType::Async, FileEngineTypeState::Async.into());
         assert_eq!(FileEngineType::Sync, FileEngineTypeState::Sync.into());
+        assert_eq!(FileEngineType::Cow, FileEngineTypeState::Cow.into());
         // Test default impl.
         assert_eq!(FileEngineTypeState::default(), FileEngineTypeState::Sync);
     }

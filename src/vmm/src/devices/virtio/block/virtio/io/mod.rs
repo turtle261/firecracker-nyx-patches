@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod async_io;
+pub mod cow_io;
 pub mod sync_io;
 
 use std::fmt::Debug;
 use std::fs::File;
 
 pub use self::async_io::{AsyncFileEngine, AsyncIoError};
+pub use self::cow_io::CowFileEngine;
 pub use self::sync_io::{SyncFileEngine, SyncIoError};
 use crate::devices::virtio::block::virtio::PendingRequest;
 use crate::devices::virtio::block::virtio::device::FileEngineType;
@@ -54,6 +56,7 @@ pub enum FileEngine {
     #[allow(unused)]
     Async(AsyncFileEngine),
     Sync(SyncFileEngine),
+    Cow(CowFileEngine),
 }
 
 impl FileEngine {
@@ -63,6 +66,7 @@ impl FileEngine {
                 AsyncFileEngine::from_file(file).map_err(BlockIoError::Async)?,
             )),
             FileEngineType::Sync => Ok(FileEngine::Sync(SyncFileEngine::from_file(file))),
+            FileEngineType::Cow => Ok(FileEngine::Cow(CowFileEngine::from_file(file))),
         }
     }
 
@@ -70,6 +74,7 @@ impl FileEngine {
         match self {
             FileEngine::Async(engine) => engine.update_file(file).map_err(BlockIoError::Async)?,
             FileEngine::Sync(engine) => engine.update_file(file),
+            FileEngine::Cow(engine) => engine.update_file(file),
         };
 
         Ok(())
@@ -80,6 +85,7 @@ impl FileEngine {
         match self {
             FileEngine::Async(engine) => engine.file(),
             FileEngine::Sync(engine) => engine.file(),
+            FileEngine::Cow(engine) => engine.file(),
         }
     }
 
@@ -100,6 +106,13 @@ impl FileEngine {
                 }),
             },
             FileEngine::Sync(engine) => match engine.read(offset, mem, addr, count) {
+                Ok(count) => Ok(FileEngineOk::Executed(RequestOk { req, count })),
+                Err(err) => Err(RequestError {
+                    req,
+                    error: BlockIoError::Sync(err),
+                }),
+            },
+            FileEngine::Cow(engine) => match engine.read(offset, mem, addr, count) {
                 Ok(count) => Ok(FileEngineOk::Executed(RequestOk { req, count })),
                 Err(err) => Err(RequestError {
                     req,
@@ -132,6 +145,13 @@ impl FileEngine {
                     error: BlockIoError::Sync(err),
                 }),
             },
+            FileEngine::Cow(engine) => match engine.write(offset, mem, addr, count) {
+                Ok(count) => Ok(FileEngineOk::Executed(RequestOk { req, count })),
+                Err(err) => Err(RequestError {
+                    req,
+                    error: BlockIoError::Sync(err),
+                }),
+            },
         }
     }
 
@@ -154,6 +174,13 @@ impl FileEngine {
                     error: BlockIoError::Sync(err),
                 }),
             },
+            FileEngine::Cow(engine) => match engine.flush() {
+                Ok(_) => Ok(FileEngineOk::Executed(RequestOk { req, count: 0 })),
+                Err(err) => Err(RequestError {
+                    req,
+                    error: BlockIoError::Sync(err),
+                }),
+            },
         }
     }
 
@@ -161,6 +188,7 @@ impl FileEngine {
         match self {
             FileEngine::Async(engine) => engine.drain(discard).map_err(BlockIoError::Async),
             FileEngine::Sync(_engine) => Ok(()),
+            FileEngine::Cow(_engine) => Ok(()),
         }
     }
 
@@ -170,6 +198,7 @@ impl FileEngine {
                 engine.drain_and_flush(discard).map_err(BlockIoError::Async)
             }
             FileEngine::Sync(engine) => engine.flush().map_err(BlockIoError::Sync),
+            FileEngine::Cow(engine) => engine.flush().map_err(BlockIoError::Sync),
         }
     }
 }

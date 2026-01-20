@@ -122,6 +122,8 @@ pub struct VirtioDeviceState {
     pub avail_features: u64,
     /// Negotiated virtio features.
     pub acked_features: u64,
+    /// Interrupt status register.
+    pub interrupt_status: u32,
     /// List of queues.
     pub queues: Vec<QueueState>,
     /// Flag for activated status.
@@ -135,6 +137,7 @@ impl VirtioDeviceState {
             device_type: device.device_type(),
             avail_features: device.avail_features(),
             acked_features: device.acked_features(),
+            interrupt_status: device.interrupt_status().load(Ordering::Relaxed),
             queues: device.queues().iter().map(Persist::save).collect(),
             activated: device.is_activated(),
         }
@@ -201,6 +204,21 @@ pub struct MmioTransportState {
     device_status: u32,
     config_generation: u32,
     interrupt_status: u32,
+}
+
+impl MmioTransportState {
+    /// Apply transport state to an existing MMIO transport (NYX extension).
+    pub fn apply_to(&self, transport: &mut MmioTransport) {
+        transport.features_select = self.features_select;
+        transport.acked_features_select = self.acked_features_select;
+        transport.queue_select = self.queue_select;
+        transport.device_status = self.device_status;
+        transport.config_generation = self.config_generation;
+        transport
+            .interrupt
+            .irq_status
+            .store(self.interrupt_status, Ordering::Relaxed);
+    }
 }
 
 /// Auxiliary structure for initializing the transport when resuming from a snapshot.

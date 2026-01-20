@@ -50,6 +50,8 @@ pub enum FileEngineType {
     /// Use a Sync engine, based on blocking system calls.
     #[default]
     Sync,
+    /// Copy-on-write engine that keeps deltas in memory.
+    Cow,
 }
 
 /// Helper object for setting up all `Block` fields derived from its backing file.
@@ -273,6 +275,10 @@ macro_rules! unwrap_async_file_engine_or_return {
         match $file_engine {
             FileEngine::Async(engine) => engine,
             FileEngine::Sync(_) => {
+                error!("The block device doesn't use an async IO engine");
+                return;
+            }
+            FileEngine::Cow(_) => {
                 error!("The block device doesn't use an async IO engine");
                 return;
             }
@@ -560,6 +566,7 @@ impl VirtioBlock {
         match self.disk.file_engine {
             FileEngine::Sync(_) => FileEngineType::Sync,
             FileEngine::Async(_) => FileEngineType::Async,
+            FileEngine::Cow(_) => FileEngineType::Cow,
         }
     }
 
@@ -670,6 +677,17 @@ impl VirtioDevice for VirtioBlock {
 
     fn is_activated(&self) -> bool {
         self.device_state.is_activated()
+    }
+
+    fn as_cow_file_engine(&self) -> Option<&block_io::CowFileEngine> {
+        match &self.disk.file_engine {
+            FileEngine::Cow(engine) => Some(engine),
+            _ => None,
+        }
+    }
+
+    fn nyx_handle_queue_event(&mut self, _queue_index: u16) {
+        let _ = self.process_virtio_queues();
     }
 }
 

@@ -8,6 +8,7 @@
 use std::convert::Infallible;
 use std::fmt::Debug;
 use std::path::PathBuf;
+use std::os::unix::io::FromRawFd;
 use std::sync::{Arc, Mutex};
 
 use acpi::ACPIDeviceManager;
@@ -15,7 +16,7 @@ use event_manager::{MutEventSubscriber, SubscriberOps};
 #[cfg(target_arch = "x86_64")]
 use legacy::{LegacyDeviceError, PortIODeviceManager};
 use linux_loader::loader::Cmdline;
-use log::{error, info};
+use log::{info, warn};
 use mmio::{MMIODeviceManager, MmioError};
 use pci_mngr::{PciDevices, PciDevicesConstructorArgs, PciManagerError};
 use persist::MMIODevManagerConstructorArgs;
@@ -104,19 +105,29 @@ pub struct DeviceManager {
 }
 
 impl DeviceManager {
-    // Adds `O_NONBLOCK` to the stdout flags.
-    fn set_stdout_nonblocking() {
+    // Create a non-blocking duplicate of stdout without changing the global stdout flags.
+    fn open_stdout_nonblocking() -> Result<std::fs::File, std::io::Error> {
+        // SAFETY: libc::dup returns a new fd or -1 on error.
+        let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
         // SAFETY: Call is safe since parameters are valid.
-        let flags = unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_GETFL, 0) };
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
         if flags < 0 {
-            error!("Could not get Firecracker stdout flags.");
+            // SAFETY: closing the fd is safe.
+            unsafe { libc::close(fd) };
+            return Err(std::io::Error::last_os_error());
         }
         // SAFETY: Call is safe since parameters are valid.
-        let rc =
-            unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+        let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
         if rc < 0 {
-            error!("Could not set Firecracker stdout to non-blocking.");
+            // SAFETY: closing the fd is safe.
+            unsafe { libc::close(fd) };
+            return Err(std::io::Error::last_os_error());
         }
+        // SAFETY: fd is a valid file descriptor we own.
+        Ok(unsafe { std::fs::File::from_raw_fd(fd) })
     }
 
     /// Sets up the serial device.
@@ -127,9 +138,14 @@ impl DeviceManager {
         let (serial_in, serial_out) = match output {
             Some(path) => (None, open_file_write_nonblock(path).map(SerialOut::File)?),
             None => {
-                Self::set_stdout_nonblocking();
-
-                (Some(std::io::stdin()), SerialOut::Stdout(std::io::stdout()))
+                let stdout_file = match Self::open_stdout_nonblocking() {
+                    Ok(file) => SerialOut::File(file),
+                    Err(err) => {
+                        warn!("Falling back to blocking stdout for serial output: {}", err);
+                        SerialOut::Stdout(std::io::stdout())
+                    }
+                };
+                (Some(std::io::stdin()), stdout_file)
             }
         };
 

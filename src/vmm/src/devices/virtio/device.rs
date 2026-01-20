@@ -15,6 +15,7 @@ use super::ActivateError;
 use super::queue::{Queue, QueueError};
 use super::transport::VirtioInterrupt;
 use crate::devices::virtio::AsAny;
+use crate::devices::virtio::block::virtio::io::cow_io::CowFileEngine;
 use crate::logger::warn;
 use crate::vstate::memory::GuestMemoryMmap;
 
@@ -169,6 +170,14 @@ pub trait VirtioDevice: AsAny + Send {
 
     /// Kick the device, as if it had received external events.
     fn kick(&mut self) {}
+
+    /// Returns a COW file engine if the device exposes one (NYX extension).
+    fn as_cow_file_engine(&self) -> Option<&CowFileEngine> {
+        None
+    }
+
+    /// Handle a queue notification from an MMIO write (NYX extension).
+    fn nyx_handle_queue_event(&mut self, _queue_index: u16) {}
 }
 
 impl fmt::Debug for dyn VirtioDevice {

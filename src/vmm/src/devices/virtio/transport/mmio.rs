@@ -331,6 +331,16 @@ impl BusDevice for MmioTransport {
                     0x30 => self.queue_select = v,
                     0x38 => self.update_queue_field(|q| q.size = (v & 0xffff) as u16),
                     0x44 => self.update_queue_field(|q| q.ready = v == 1),
+                    0x50 => {
+                        if self.check_device_status(device_status::DRIVER_OK, 0) {
+                            self.locked_device().nyx_handle_queue_event(v as u16);
+                        } else {
+                            warn!(
+                                "queue notify in invalid state {:#x}",
+                                self.device_status
+                            );
+                        }
+                    }
                     0x64 => {
                         if self.check_device_status(device_status::DRIVER_OK, 0) {
                             self.interrupt.irq_status.fetch_and(!v, Ordering::SeqCst);

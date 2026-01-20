@@ -16,12 +16,13 @@ use utils::time::TimestampUs;
 use vm_allocator::AllocPolicy;
 use vm_memory::GuestAddress;
 
-#[cfg(target_arch = "aarch64")]
 use crate::Vcpu;
 use crate::arch::{ConfigurationError, configure_system_for_boot, load_kernel};
 #[cfg(target_arch = "aarch64")]
 use crate::construct_kvm_mpidrs;
-use crate::cpu_config::templates::{GetCpuTemplate, GetCpuTemplateError, GuestConfigError};
+use crate::cpu_config::templates::{
+    GetCpuTemplate, GetCpuTemplateError, GuestConfigError, KvmCapability,
+};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager;
 use crate::device_manager::pci_mngr::PciManagerError;
@@ -119,7 +120,6 @@ pub enum StartMicrovmError {
     #[cfg(feature = "gdb")]
     GdbServer(gdb::target::GdbTargetError),
     /// Error cloning Vcpu fds
-    #[cfg(feature = "gdb")]
     VcpuFdCloneError(#[from] crate::vstate::vcpu::CopyKvmFdError),
     /// Error with the Vm object: {0}
     Vm(#[from] VmError),
@@ -131,6 +131,40 @@ impl std::convert::From<linux_loader::cmdline::Error> for StartMicrovmError {
     fn from(err: linux_loader::cmdline::Error) -> StartMicrovmError {
         StartMicrovmError::KernelCmdline(err.to_string())
     }
+}
+
+#[cfg_attr(target_arch = "aarch64", allow(unused))]
+pub fn create_vmm_and_vcpus(
+    instance_info: &InstanceInfo,
+    event_manager: &mut EventManager,
+    guest_memory: Vec<GuestRegionMmap>,
+    uffd: Option<Uffd>,
+    _track_dirty_pages: bool,
+    vcpu_count: u8,
+    kvm_capabilities: Vec<KvmCapability>,
+) -> Result<(Vmm, Vec<Vcpu>), StartMicrovmError> {
+    let kvm = Kvm::new(kvm_capabilities).map_err(StartMicrovmError::Kvm)?;
+    let mut vm = Vm::new(&kvm).map_err(StartMicrovmError::Vm)?;
+    let (vcpus, vcpus_exit_evt) = vm.create_vcpus(vcpu_count).map_err(StartMicrovmError::Vm)?;
+    vm.register_dram_memory_regions(guest_memory)
+        .map_err(StartMicrovmError::Vm)?;
+
+    let device_manager =
+        DeviceManager::new(event_manager, &vcpus_exit_evt, &vm, None)
+            .map_err(StartMicrovmError::CreateDeviceManager)?;
+
+    let vmm = Vmm {
+        instance_info: instance_info.clone(),
+        shutdown_exit_code: None,
+        kvm,
+        vm: Arc::new(vm),
+        uffd,
+        vcpus_handles: Vec::new(),
+        vcpus_exit_evt,
+        device_manager,
+    };
+
+    Ok((vmm, vcpus))
 }
 
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
@@ -645,7 +679,7 @@ fn attach_virtio_mem_device(
     Ok(())
 }
 
-fn attach_block_devices<'a, I: Iterator<Item = &'a Arc<Mutex<Block>>> + Debug>(
+pub fn attach_block_devices<'a, I: Iterator<Item = &'a Arc<Mutex<Block>>> + Debug>(
     device_manager: &mut DeviceManager,
     vm: &Arc<Vm>,
     cmdline: &mut LoaderKernelCmdline,
@@ -674,7 +708,7 @@ fn attach_block_devices<'a, I: Iterator<Item = &'a Arc<Mutex<Block>>> + Debug>(
     Ok(())
 }
 
-fn attach_net_devices<'a, I: Iterator<Item = &'a Arc<Mutex<Net>>> + Debug>(
+pub fn attach_net_devices<'a, I: Iterator<Item = &'a Arc<Mutex<Net>>> + Debug>(
     device_manager: &mut DeviceManager,
     vm: &Arc<Vm>,
     cmdline: &mut LoaderKernelCmdline,

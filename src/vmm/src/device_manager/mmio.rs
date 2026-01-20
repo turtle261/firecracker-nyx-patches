@@ -114,6 +114,12 @@ pub struct MMIODevice<T> {
     pub(crate) inner: Arc<Mutex<T>>,
 }
 
+impl<T> MMIODevice<T> {
+    pub fn inner(&self) -> &Arc<Mutex<T>> {
+        &self.inner
+    }
+}
+
 /// Manages the complexities of registering a MMIO device.
 #[derive(Debug, Default)]
 pub struct MMIODeviceManager {
@@ -182,14 +188,18 @@ impl MMIODeviceManager {
         {
             let mmio_device = device.inner.lock().expect("Poisoned lock");
             let locked_device = mmio_device.locked_device();
-            identifier = (locked_device.device_type(), device_id);
-            for (i, queue_evt) in locked_device.queue_events().iter().enumerate() {
-                let io_addr = IoEventAddress::Mmio(
-                    device.resources.addr + u64::from(crate::devices::virtio::NOTIFY_REG_OFFSET),
-                );
-                vm.fd()
-                    .register_ioevent(queue_evt, &io_addr, u32::try_from(i).unwrap())
-                    .map_err(MmioError::RegisterIoEvent)?;
+            let device_type = locked_device.device_type();
+            identifier = (device_type, device_id);
+            let disable_ioevent = locked_device.as_cow_file_engine().is_some();
+            if !disable_ioevent {
+                for (i, queue_evt) in locked_device.queue_events().iter().enumerate() {
+                    let io_addr = IoEventAddress::Mmio(
+                        device.resources.addr + u64::from(crate::devices::virtio::NOTIFY_REG_OFFSET),
+                    );
+                    vm.fd()
+                        .register_ioevent(queue_evt, &io_addr, u32::try_from(i).unwrap())
+                        .map_err(MmioError::RegisterIoEvent)?;
+                }
             }
             vm.register_irq(&mmio_device.interrupt.irq_evt, gsi)
                 .map_err(MmioError::RegisterIrqFd)?;

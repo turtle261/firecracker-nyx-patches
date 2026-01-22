@@ -335,10 +335,7 @@ impl BusDevice for MmioTransport {
                         if self.check_device_status(device_status::DRIVER_OK, 0) {
                             self.locked_device().nyx_handle_queue_event(v as u16);
                         } else {
-                            warn!(
-                                "queue notify in invalid state {:#x}",
-                                self.device_status
-                            );
+                            warn!("queue notify in invalid state {:#x}", self.device_status);
                         }
                     }
                     0x64 => {

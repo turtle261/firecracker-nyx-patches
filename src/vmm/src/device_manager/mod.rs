@@ -7,8 +7,8 @@
 
 use std::convert::Infallible;
 use std::fmt::Debug;
-use std::path::PathBuf;
 use std::os::unix::io::FromRawFd;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use acpi::ACPIDeviceManager;

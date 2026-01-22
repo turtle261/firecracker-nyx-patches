@@ -6,8 +6,8 @@
 use device::ConfigSpace;
 use std::sync::Arc;
 
-use super::io::cow_io::CowCache;
 use super::io::FileEngine;
+use super::io::cow_io::CowCache;
 use serde::{Deserialize, Serialize};
 use vmm_sys_util::eventfd::EventFd;
 

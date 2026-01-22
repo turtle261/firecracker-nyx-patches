@@ -9,8 +9,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use vm_memory::bitmap::BitmapSlice;
 use vm_memory::{ReadVolatile, VolatileSlice};
 
-use crate::devices::virtio::block::virtio::io::sync_io::SyncIoError;
 use crate::devices::virtio::block::virtio::SECTOR_SIZE;
+use crate::devices::virtio::block::virtio::io::sync_io::SyncIoError;
 use crate::vstate::memory::{GuestAddress, GuestMemory, GuestMemoryMmap};
 
 const SECTOR_SIZE_USIZE: usize = SECTOR_SIZE as usize;
@@ -221,7 +221,11 @@ impl CowFileEngine {
     ) -> Result<u32, SyncIoError> {
         mem.get_slice(addr, count as usize)
             .and_then(|mut slice| {
-                self.cache.lock().unwrap().current.read(&mut self.file, offset, &mut slice);
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .current
+                    .read(&mut self.file, offset, &mut slice);
                 Ok(())
             })
             .map_err(SyncIoError::Transfer)?;

@@ -287,9 +287,7 @@ impl MachineConfig {
             cpu_template,
             track_dirty_pages: update.track_dirty_pages.unwrap_or(self.track_dirty_pages),
             huge_pages: page_config,
-            enable_nested_virt: update
-                .enable_nested_virt
-                .unwrap_or(self.enable_nested_virt),
+            enable_nested_virt: update.enable_nested_virt.unwrap_or(self.enable_nested_virt),
             #[cfg(feature = "gdb")]
             gdb_socket_path: update.gdb_socket_path.clone(),
         })

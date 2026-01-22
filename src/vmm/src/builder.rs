@@ -151,9 +151,8 @@ pub fn create_vmm_and_vcpus(
     vm.register_dram_memory_regions(guest_memory)
         .map_err(StartMicrovmError::Vm)?;
 
-    let device_manager =
-        DeviceManager::new(event_manager, &vcpus_exit_evt, &vm, None)
-            .map_err(StartMicrovmError::CreateDeviceManager)?;
+    let device_manager = DeviceManager::new(event_manager, &vcpus_exit_evt, &vm, None)
+        .map_err(StartMicrovmError::CreateDeviceManager)?;
 
     let vmm = Vmm {
         instance_info: instance_info.clone(),

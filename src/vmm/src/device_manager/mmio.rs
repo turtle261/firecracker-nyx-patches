@@ -194,7 +194,8 @@ impl MMIODeviceManager {
             if !disable_ioevent {
                 for (i, queue_evt) in locked_device.queue_events().iter().enumerate() {
                     let io_addr = IoEventAddress::Mmio(
-                        device.resources.addr + u64::from(crate::devices::virtio::NOTIFY_REG_OFFSET),
+                        device.resources.addr
+                            + u64::from(crate::devices::virtio::NOTIFY_REG_OFFSET),
                     );
                     vm.fd()
                         .register_ioevent(queue_evt, &io_addr, u32::try_from(i).unwrap())

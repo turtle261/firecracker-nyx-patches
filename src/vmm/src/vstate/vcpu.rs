@@ -641,9 +641,9 @@ impl VcpuHandle {
     /// When [`vmm_sys_util::linux::signal::Killable::kill`] errors.
     pub fn send_event(&mut self, event: VcpuEvent) -> Result<(), VcpuSendEventError> {
         // Use expect() to crash if the other thread closed this channel.
-        self.event_sender
-            .send(event)
-            .expect("event sender channel closed on vcpu end.");
+        if self.event_sender.send(event).is_err() {
+            return Err(VcpuSendEventError(errno::Error::new(libc::EPIPE)));
+        }
         // Kick the vcpu so it picks up the message.
         // Add a fence to ensure the write is visible to the vpu thread
         self.vcpu_fd.set_kvm_immediate_exit(1);
